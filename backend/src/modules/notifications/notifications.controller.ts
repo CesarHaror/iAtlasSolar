@@ -13,7 +13,7 @@ export async function testEmailConfigController(
       throw new AppError(400, 'Destinatario requerido');
     }
     // Usar el servicio de email para enviar un correo de prueba
-    const { sendTestEmail } = await import('./email.service');
+    const { sendTestEmail } = await import('./email.service.js');
     await sendTestEmail(to);
     res.json({ success: true, message: 'Correo de prueba enviado correctamente.' });
   } catch (error) {

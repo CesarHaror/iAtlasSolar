@@ -6,6 +6,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { authenticate } from '../../shared/middleware/auth.js';
+import { validateFileType, validateFileSize } from '../../middleware/validation.js';
 import {
   analyzeReceipt,
   analyzeReceiptBase64,
@@ -46,8 +47,17 @@ router.use(authenticate);
 // Estado del servicio OCR
 router.get('/status', getOCRStatus);
 
-// Analizar recibo desde archivo
-router.post('/analyze-receipt', upload.single('receipt'), analyzeReceipt);
+// Analizar recibo desde archivo con validación
+router.post(
+  '/analyze-receipt',
+  upload.single('receipt'),
+  validateFileType(['application/pdf']),
+  validateFileSize(10 * 1024 * 1024),
+  analyzeReceipt
+);
+
+// Analizar recibo desde base64
+router.post('/analyze-receipt-base64', analyzeReceiptBase64);
 
 // Analizar recibo desde base64
 router.post('/analyze-receipt-base64', analyzeReceiptBase64);

@@ -9,6 +9,10 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { config } from './config/index.js';
 import { errorHandler, notFoundHandler } from './shared/middleware/index.js';
+import logger from './config/logger.js';
+import { errorHandler as customErrorHandler } from './middleware/errorHandler.js';
+import { apiLimiter, loginLimiter, ocrLimiter } from './middleware/rateLimiter.js';
+import { validateJSONInput } from './middleware/validation.js';
 
 // Importar rutas
 import { authRoutes } from './modules/auth/index.js';
@@ -56,34 +60,25 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-// Rate limiting general
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // máximo 100 requests por ventana
-  message: {
-    success: false,
-    error: {
-      code: 'RATE_LIMIT',
-      message: 'Demasiadas solicitudes, intenta más tarde',
-    },
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+// Logging middleware
+app.use((req, res, next) => {
+  logger.info({
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+    userAgent: req.headers['user-agent'],
+  });
+  next();
 });
-app.use(limiter);
+
+// Validación de Content-Type
+app.use(validateJSONInput);
+
+// Rate limiting general
+app.use(apiLimiter);
 
 // Rate limiting específico para auth (más estricto)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 10, // máximo 10 intentos de login
-  message: {
-    success: false,
-    error: {
-      code: 'RATE_LIMIT',
-      message: 'Demasiados intentos de login, intenta en 15 minutos',
-    },
-  },
-});
+app.use('/api/auth/login', loginLimiter);
 
 // =====================================================
 // MIDDLEWARE DE PARSING
@@ -132,7 +127,7 @@ app.get('/api', (req, res) => {
 // =====================================================
 
 // Auth con rate limiting específico
-app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRoutes);
 
 // Clientes
@@ -162,8 +157,8 @@ app.use('/api/config', configRoutes);
 // Upload de archivos
 app.use('/api/upload', uploadRoutes);
 
-// OCR - Análisis de recibos CFE
-app.use('/api/ocr', ocrRoutes);
+// OCR - Análisis de recibos CFE (con rate limiting específico)
+app.use('/api/ocr', ocrLimiter, ocrRoutes);
 
 // =====================================================
 // MANEJO DE ERRORES
@@ -172,8 +167,26 @@ app.use('/api/ocr', ocrRoutes);
 // Ruta no encontrada
 app.use(notFoundHandler);
 
-// Manejador global de errores
-app.use(errorHandler);
+// Manejador global de errores mejorado
+app.use(customErrorHandler);
+
+// Fallback para errores no capturados
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({
+    message: 'Unhandled Rejection',
+    reason,
+    promise,
+  });
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error({
+    message: 'Uncaught Exception',
+    error: error.message,
+    stack: error.stack,
+  });
+  process.exit(1);
+});
 
 // =====================================================
 // INICIAR SERVIDOR
