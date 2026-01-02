@@ -1,0 +1,480 @@
+// =====================================================
+// ATLAS SOLAR - ESQUEMA DE BASE DE DATOS
+// Sistema de Cotización de Energía Solar
+// =====================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =====================================================
+// ENUMS
+// =====================================================
+
+enum Role {
+  ADMIN
+  VENDEDOR
+  INSTALADOR
+  VIEWER
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  VIEWED
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum ProjectStatus {
+  PENDING_PAYMENT    // Esperando anticipo
+  IN_PROGRESS        // En instalación
+  CFE_PROCESS        // En trámite CFE
+  COMPLETED          // Completado
+  CANCELLED          // Cancelado
+}
+
+enum ProformaStatus {
+  DRAFT              // Borrador
+  SENT               // Enviada al cliente
+  PENDING_SIGNATURE  // Pendiente de firma
+  SIGNED             // Firmada
+  CANCELLED          // Cancelada
+}
+
+enum PaymentStatus {
+  PENDING            // Pendiente
+  PARTIAL            // Parcial
+  PAID               // Pagado
+  OVERDUE            // Vencido
+}
+
+enum PaymentPhase {
+  ANTICIPO           // 50% inicial
+  MATERIALES         // 30% al entregar materiales
+  FINIQUITO          // 20% al terminar
+}
+
+enum CFETariff {
+  // Tarifas domésticas - nombres originales CFE
+  T01     // Tarifa 01 - Doméstica (valor original en recibos)
+  T1      // Tarifa 1 - Templada
+  T1A     // Tarifa 1A - Mínimo 25°C
+  T1B     // Tarifa 1B - Mínimo 28°C
+  T1C     // Tarifa 1C - Mínimo 30°C
+  T1D     // Tarifa 1D - Mínimo 31°C
+  T1E     // Tarifa 1E - Mínimo 32°C
+  T1F     // Tarifa 1F - Mínimo 33°C
+  DAC     // Doméstica Alto Consumo
+  PDBT    // Pequeña Demanda Baja Tensión (comercial)
+  GDMTO   // Gran Demanda Media Tensión Ordinaria (<100kW)
+  GDMTH   // Gran Demanda Media Tensión Horaria (≥100kW)
+}
+
+// =====================================================
+// USUARIOS DEL SISTEMA
+// =====================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  name          String
+  phone         String?
+  role          Role      @default(VENDEDOR)
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  
+  // Relaciones
+  quotations    Quotation[]   @relation("CreatedBy")
+  projects      Project[]     @relation("AssignedTo")
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("users")
+}
+
+// =====================================================
+// CLIENTES
+// =====================================================
+
+model Client {
+  id            String    @id @default(cuid())
+  
+  // Datos personales
+  name          String
+  email         String    @unique
+  phone         String
+  rfc           String?
+  
+  // Dirección
+  address       String
+  city          String
+  state         String?
+  postalCode    String?
+  
+  // Ubicación (para cálculos de irradiancia)
+  latitude      Float?
+  longitude     Float?
+  
+  // Datos CFE
+  cfeServiceNumber  String?
+  cfeTariff         CFETariff?
+  
+  // Metadata
+  notes         String?
+  source        String?   // ¿De dónde vino? (referido, web, etc.)
+  
+  // Relaciones
+  quotations    Quotation[]
+  proformas     Proforma[]
+  projects      Project[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@map("clients")
+}
+
+// =====================================================
+// COTIZACIONES
+// =====================================================
+
+model Quotation {
+  id              String          @id @default(cuid())
+  quoteNumber     String          @unique    // QUOT-2024-001
+  version         Int             @default(1)
+  
+  // Relaciones
+  client          Client          @relation(fields: [clientId], references: [id])
+  clientId        String
+  createdBy       User            @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById     String
+  
+  // Estado
+  status          QuotationStatus @default(DRAFT)
+  validUntil      DateTime?
+  
+  // =====================================================
+  // DATOS DE CONSUMO (del recibo CFE)
+  // =====================================================
+  monthlyConsumption  Float       // kWh promedio mensual
+  avgBill             Float       // Gasto promedio mensual ($)
+  tariff              CFETariff   // Tarifa CFE actual
+  
+  // =====================================================
+  // SISTEMA SOLAR PROPUESTO
+  // =====================================================
+  
+  // Paneles
+  systemSize      Float           // Capacidad total en kW
+  panelsQty       Int             // Cantidad de paneles
+  panelBrand      String
+  panelModel      String
+  panelPower      Int             // Watts por panel
+  
+  // Inversor
+  inverterBrand   String
+  inverterModel   String
+  inverterPower   Float           // kW
+  
+  // Estructura
+  structureType   String?         // Techo inclinado, plano, piso
+  
+  // =====================================================
+  // PRODUCCIÓN ESTIMADA
+  // =====================================================
+  monthlyProduction   Float       // kWh/mes estimados
+  annualProduction    Float?      // kWh/año estimados
+  coveragePercent     Float?      // % del consumo cubierto
+  hspUsed             Float?      // HSP usado en el cálculo
+  
+  // =====================================================
+  // FINANCIERO
+  // =====================================================
+  
+  // Costos (internos - no visibles al cliente)
+  realCost        Float           // Costo real del sistema
+  
+  // Precio de venta
+  salePrice       Float           // Precio final al cliente
+  discount        Float?          // Descuento aplicado
+  
+  // Utilidad
+  profitAmount    Float           // Ganancia en $
+  profitMargin    Float           // Margen en %
+  
+  // Desglose de costos (JSON)
+  costBreakdown   Json?
+  // {
+  //   panels: 45000,
+  //   inverter: 18000,
+  //   structure: 8000,
+  //   installation: 12000,
+  //   cfeProcess: 5000,
+  //   warranty: 3000
+  // }
+  
+  // =====================================================
+  // AHORROS Y ROI
+  // =====================================================
+  monthlySavings      Float       // Ahorro mensual estimado
+  monthlyBillAfter    Float?      // Recibo mensual después de solar
+  annualSavings       Float?      // Ahorro anual
+  paybackYears        Float?      // Años para recuperar inversión
+  roi25Years          Float?      // ROI a 25 años (%)
+  
+  // =====================================================
+  // DOCUMENTOS
+  // =====================================================
+  pdfUrl          String?         // URL del PDF generado
+  notes           String?         // Notas internas
+  clientNotes     String?         // Notas visibles al cliente
+  
+  // =====================================================
+  // TRACKING
+  // =====================================================
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  
+  // Metadata
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relación con proyecto (si se aprueba)
+  project         Project?
+  proforma        Proforma?
+
+  @@map("quotations")
+}
+
+// =====================================================
+// PREFACTURAS / PROFORMAS
+// =====================================================
+
+model Proforma {
+  id              String          @id @default(cuid())
+  proformaNumber  String          @unique    // PRE-2024-001
+  
+  // Relaciones
+  quotation       Quotation       @relation(fields: [quotationId], references: [id])
+  quotationId     String          @unique
+  client          Client          @relation(fields: [clientId], references: [id])
+  clientId        String
+  
+  // Estado
+  status          ProformaStatus  @default(DRAFT)
+  
+  // Montos
+  subtotal        Float           // Precio antes de IVA
+  iva             Float           // 16%
+  total           Float           // Total con IVA
+  
+  // Plan de pagos (JSON)
+  paymentPlan     Json            // [{phase: 'ANTICIPO', percent: 50, amount: X}, ...]
+  
+  // Términos y condiciones
+  termsConditions String?         @db.Text
+  
+  // Firma digital
+  signatureImage  String?         // Base64 o URL de la firma
+  signedAt        DateTime?
+  signedByName    String?
+  signedByEmail   String?
+  
+  // Documentos
+  pdfUrl          String?
+  notes           String?
+  
+  // Tracking
+  sentAt          DateTime?
+  viewedAt        DateTime?
+  
+  // Timestamps
+  validUntil      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relación con proyecto
+  project         Project?
+
+  @@map("proformas")
+}
+
+// =====================================================
+// PROYECTOS (Cotizaciones Aprobadas)
+// =====================================================
+
+model Project {
+  id              String          @id @default(cuid())
+  projectNumber   String          @unique    // PROJ-2024-001
+  
+  // Relaciones
+  quotation       Quotation       @relation(fields: [quotationId], references: [id])
+  quotationId     String          @unique
+  proforma        Proforma        @relation(fields: [proformaId], references: [id])
+  proformaId      String          @unique
+  client          Client          @relation(fields: [clientId], references: [id])
+  clientId        String
+  assignedTo      User?           @relation("AssignedTo", fields: [assignedToId], references: [id])
+  assignedToId    String?
+  
+  // Estado
+  status          ProjectStatus   @default(PENDING_PAYMENT)
+  
+  // Fechas importantes
+  startDate       DateTime?
+  estimatedEndDate DateTime?
+  actualEndDate   DateTime?
+  cfeApprovalDate DateTime?
+  interconnectionDate DateTime?
+  
+  // Información del sistema
+  systemSize      Float           // kW
+  panelsQty       Int
+  
+  // Pagos
+  totalAmount     Float
+  paidAmount      Float           @default(0)
+  pendingAmount   Float
+  payments        Payment[]
+  
+  // Notas y documentos
+  notes           String?         @db.Text
+  documents       Json?           // URLs de documentos
+  
+  // Dirección de instalación
+  installationAddress String?
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("projects")
+}
+
+// =====================================================
+// PAGOS
+// =====================================================
+
+model Payment {
+  id              String        @id @default(cuid())
+  
+  project         Project       @relation(fields: [projectId], references: [id])
+  projectId       String
+  
+  // Fase del pago
+  phase           PaymentPhase
+  phaseLabel      String        // "Anticipo (50%)", "Materiales (30%)", etc.
+  
+  // Montos
+  expectedAmount  Float         // Monto esperado
+  paidAmount      Float         @default(0)
+  
+  // Estado
+  status          PaymentStatus @default(PENDING)
+  dueDate         DateTime?     // Fecha límite
+  
+  // Información del pago
+  paymentMethod   String?       // Transferencia, Efectivo, Tarjeta
+  reference       String?       // Número de referencia
+  receiptUrl      String?       // Comprobante
+  notes           String?
+  
+  paidAt          DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+// =====================================================
+// CONFIGURACIÓN DEL SISTEMA
+// =====================================================
+
+model SystemConfig {
+  id              String    @id @default(cuid())
+  key             String    @unique
+  value           String
+  description     String?
+  
+  updatedAt       DateTime  @updatedAt
+
+  @@map("system_config")
+}
+
+// =====================================================
+// CATÁLOGO DE PRODUCTOS
+// =====================================================
+
+model PanelCatalog {
+  id              String    @id @default(cuid())
+  brand           String
+  model           String
+  power           Int       // Watts
+  efficiency      Float     // %
+  warranty        Int       // Años
+  price           Float     // Costo
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([brand, model])
+  @@map("panel_catalog")
+}
+
+model InverterCatalog {
+  id              String    @id @default(cuid())
+  brand           String
+  model           String
+  power           Float     // kW
+  phases          Int       // 1 o 3
+  warranty        Int       // Años
+  price           Float     // Costo
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([brand, model])
+  @@map("inverter_catalog")
+}
+
+// =====================================================
+// HSP POR CIUDAD (Horas Sol Pico)
+// =====================================================
+
+model CityHSP {
+  id              String    @id @default(cuid())
+  city            String    @unique
+  state           String
+  hsp             Float     // Horas Sol Pico promedio
+  latitude        Float?
+  longitude       Float?
+  
+  // HSP por mes (opcional, para cálculos más precisos)
+  hspJan          Float?
+  hspFeb          Float?
+  hspMar          Float?
+  hspApr          Float?
+  hspMay          Float?
+  hspJun          Float?
+  hspJul          Float?
+  hspAug          Float?
+  hspSep          Float?
+  hspOct          Float?
+  hspNov          Float?
+  hspDec          Float?
+
+  @@map("city_hsp")
+}
