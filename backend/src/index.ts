@@ -26,6 +26,7 @@ import catalogRoutes from './modules/catalog/catalog.routes.js';
 import configRoutes from './modules/config/config.routes.js';
 import uploadRoutes from './modules/upload/upload.routes.js';
 import ocrRoutes from './modules/ocr/ocr.routes.js';
+import aiRoutes from './modules/ai/ai.routes.js';
 
 // Crear aplicación Express
 const app = express();
@@ -160,6 +161,9 @@ app.use('/api/upload', uploadRoutes);
 // OCR - Análisis de recibos CFE (con rate limiting específico)
 app.use('/api/ocr', ocrLimiter, ocrRoutes);
 
+// IA AVANZADA - FASE 4
+app.use('/api/ai', aiRoutes);
+
 // =====================================================
 // MANEJO DE ERRORES
 // =====================================================
@@ -194,20 +198,39 @@ process.on('uncaughtException', (error) => {
 
 const PORT = config.port;
 
-app.listen(PORT, () => {
-  console.log('\n🚀 ═══════════════════════════════════════════════════════');
-  console.log('   ATLAS SOLAR - API Server');
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log(`   🌐 URL:         http://localhost:${PORT}`);
-  console.log(`   📡 Ambiente:    ${config.nodeEnv}`);
-  console.log(`   🔗 Frontend:    ${config.frontendUrl}`);
-  console.log('═══════════════════════════════════════════════════════════');
-  console.log('   📚 Endpoints disponibles:');
-  console.log(`      GET  /health          - Estado del servidor`);
-  console.log(`      GET  /api             - Info de la API`);
-  console.log(`      POST /api/auth/login  - Iniciar sesión`);
-  console.log(`      GET  /api/auth/profile - Perfil de usuario`);
-  console.log('═══════════════════════════════════════════════════════════\n');
-});
+// Inicializar servicios IA antes de escuchar
+(async () => {
+  try {
+    // Inicializar Tesseract OCR (opcional, mejora OCR pero puede ser lento)
+    const advancedOCRModule = (await import('./modules/ai/ocr-advanced.service.js')).default;
+    if (advancedOCRModule && typeof (advancedOCRModule as any).initialize === 'function') {
+      await (advancedOCRModule as any).initialize();
+      logger.info({ message: 'Advanced OCR service initialized' });
+    }
+  } catch (error) {
+    logger.warn({
+      message: 'Could not initialize Advanced OCR, will use fallback',
+      error: error instanceof Error ? error.message : 'Unknown'
+    });
+  }
+
+  app.listen(PORT, () => {
+    console.log('\n🚀 ═══════════════════════════════════════════════════════');
+    console.log('   iATLAS SOLAR - API Server - FASE 4 (IA AVANZADA)');
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`   🌐 URL:         http://localhost:${PORT}`);
+    console.log(`   📡 Ambiente:    ${config.nodeEnv}`);
+    console.log(`   🔗 Frontend:    ${config.frontendUrl}`);
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('   📚 ENDPOINTS DE IA DISPONIBLES:');
+    console.log(`      POST /api/ai/ocr/analyze-advanced         - OCR con Tesseract`);
+    console.log(`      POST /api/ai/consumption/analyze          - Análisis de consumo`);
+    console.log(`      POST /api/ai/quotations/generate-from-ocr - Auto-generar cotización`);
+    console.log(`      POST /api/ai/emails/generate-proposal     - Generar email propuesta`);
+    console.log(`      POST /api/ai/emails/generate-analysis     - Generar email análisis`);
+    console.log(`      GET  /api/ai/health                       - Estado de servicios IA`);
+    console.log('═══════════════════════════════════════════════════════════\n');
+  });
+})();
 
 export default app;
