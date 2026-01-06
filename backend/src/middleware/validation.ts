@@ -56,13 +56,29 @@ export const validateFileSize = (maxSizeBytes: number) => {
 
 // Middleware para validar entrada JSON
 export const validateJSONInput = (req: Request, res: Response, next: NextFunction) => {
+  // Rutas que permiten multipart/form-data (uploads de archivos)
+  const multipartRoutes = [
+    '/api/ocr/analyze-receipt',
+    '/api/upload',
+    '/api/uploads',
+  ];
+
+  const isMultipartRoute = multipartRoutes.some(route => req.path.includes(route));
+
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+    // Si es una ruta de multipart, permitir multipart/form-data
+    if (isMultipartRoute) {
+      return next();
+    }
+
+    // Para otras rutas, solo aceptar application/json
     if (!req.is('application/json')) {
       logger.warn({
         message: 'Invalid content-type',
         contentType: req.headers['content-type'],
         path: req.path,
         ip: req.ip,
+        service: 'iAtlas Solar API',
       });
       return res.status(415).json({
         status: 'error',

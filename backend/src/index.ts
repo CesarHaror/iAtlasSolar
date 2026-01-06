@@ -27,6 +27,8 @@ import configRoutes from './modules/config/config.routes.js';
 import uploadRoutes from './modules/upload/upload.routes.js';
 import ocrRoutes from './modules/ocr/ocr.routes.js';
 import aiRoutes from './modules/ai/ai.routes.js';
+import testingRoutes from './modules/ai/testing.routes.js';
+import testingDatasetRoutes from './modules/ai/testing-dataset.routes.js';
 
 // Crear aplicación Express
 const app = express();
@@ -164,6 +166,10 @@ app.use('/api/ocr', ocrLimiter, ocrRoutes);
 // IA AVANZADA - FASE 4
 app.use('/api/ai', aiRoutes);
 
+// TESTING Y VALIDACIÓN - FRAMEWORK
+app.use('/api/testing', testingRoutes);
+app.use('/api/testing/dataset', testingDatasetRoutes);
+
 // =====================================================
 // MANEJO DE ERRORES
 // =====================================================
@@ -229,6 +235,25 @@ const PORT = config.port;
     console.log(`      POST /api/ai/emails/generate-proposal     - Generar email propuesta`);
     console.log(`      POST /api/ai/emails/generate-analysis     - Generar email análisis`);
     console.log(`      GET  /api/ai/health                       - Estado de servicios IA`);
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log('   🧪 ENDPOINTS DE TESTING DISPONIBLES:');
+    console.log(`      POST /api/testing/ocr/validate-single     - Validar 1 recibo`);
+    console.log(`      POST /api/testing/ocr/batch-validate      - Validar múltiples`);
+    console.log(`      GET  /api/testing/ocr/results             - Obtener resultados`);
+    console.log(`      GET  /api/testing/ocr/metrics             - Reportar métricas`);
+    console.log(`      GET  /api/testing/ocr/report/html         - Descargar HTML`);
+    console.log(`      GET  /api/testing/ocr/report/json         - Descargar JSON`);
+    console.log(`      POST /api/testing/dataset/generate        - Generar dataset`);
+    console.log(`      GET  /api/testing/dataset/examples        - Ejemplos predefinidos`);
+    console.log(`      GET  /api/testing/dataset/template        - Plantilla ground truth`);
+    console.log(`      GET  /api/testing/dataset/export/json     - Exportar JSON`);
+    console.log(`      GET  /api/testing/dataset/export/csv      - Exportar CSV`);
+    console.log('   📊 ENDPOINTS DE BD (NUEVA):');
+    console.log(`      GET  /api/testing/database/results        - Resultados desde BD`);
+    console.log(`      GET  /api/testing/database/metrics        - Métricas desde BD`);
+    console.log(`      GET  /api/testing/database/batches        - Listar batches`);
+    console.log(`      GET  /api/testing/database/batch/:id      - Detalle batch`);
+    console.log(`      GET  /api/testing/database/test/:id       - Detalle test`);
     console.log('═══════════════════════════════════════════════════════════\n');
   });
 })();

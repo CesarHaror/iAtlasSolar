@@ -1,0 +1,1790 @@
+# 🚀 GUÍA DE IMPLEMENTACIÓN COMPLETA
+## iAtlas Solar: De MVP Funcional a SaaS
+
+**Versión:** 1.0  
+**Fecha:** Enero 2026  
+**Objetivo:** Completar funcionalidad base antes de transformar a SaaS
+
+---
+
+## 📋 TABLA DE CONTENIDOS
+
+1. [Fase 1: Ajuste de Modelos Base](#fase-1)
+2. [Fase 2: Implementación Completa de IA/OCR](#fase-2)
+3. [Fase 3: Módulo CFDI](#fase-3)
+4. [Fase 4: Preparación para SaaS](#fase-4)
+5. [Checklist de Validación](#checklist)
+
+---
+
+## <a name="fase-1"></a>🗄️ FASE 1: AJUSTE DE MODELOS BASE (Semana 1-2)
+
+### 🎯 Objetivo
+Preparar la base de datos para las nuevas funcionalidades y futuro multi-tenant.
+
+### 📊 1.1 ACTUALIZACIÓN DEL SCHEMA PRISMA
+
+```prisma
+// prisma/schema.prisma
+
+// ============================================
+// MODELO: User (Ya existente - Actualizar)
+// ============================================
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String?
+  lastName      String?
+  role          UserRole  @default(SALESPERSON)
+  isActive      Boolean   @default(true)
+  
+  // Nuevos campos
+  phone         String?
+  position      String?   // Puesto: "Vendedor", "Gerente", etc.
+  commission    Float?    // % de comisión
+  avatarUrl     String?
+  
+  // Relaciones
+  quotations    Quotation[]
+  clients       Client[]
+  activities    Activity[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@index([email])
+  @@index([role])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  SALESPERSON
+  VIEWER
+}
+
+// ============================================
+// MODELO: Client (Mejorado para CFDI)
+// ============================================
+model Client {
+  id                String    @id @default(cuid())
+  
+  // Datos básicos
+  firstName         String
+  lastName          String
+  email             String
+  phone             String
+  alternatePhone    String?
+  
+  // Dirección de instalación
+  installAddress    String
+  installCity       String
+  installState      String
+  installZipCode    String
+  coordinates       String?   // "lat,lng" para mapas
+  
+  // Datos fiscales (para CFDI)
+  rfc               String?   @unique
+  businessName      String?   // Razón social
+  taxRegime         String?   // Régimen fiscal
+  fiscalAddress     String?
+  fiscalCity        String?
+  fiscalState       String?
+  fiscalZipCode     String?
+  cfdiUse           String?   // Uso de CFDI (G03, etc)
+  
+  // Clasificación
+  clientType        ClientType @default(RESIDENTIAL)
+  status            ClientStatus @default(LEAD)
+  leadSource        String?    // "Referido", "Facebook", "Google"
+  tags              String[]   // ["VIP", "Urgente", "Corporativo"]
+  
+  // Métricas
+  lifetimeValue     Float?     // Valor total generado
+  averageTicket     Float?
+  
+  // Notas y seguimiento
+  notes             String?    @db.Text
+  lastContactDate   DateTime?
+  nextFollowUpDate  DateTime?
+  
+  // Relaciones
+  createdBy         User      @relation(fields: [createdById], references: [id])
+  createdById       String
+  quotations        Quotation[]
+  invoices          Invoice[]
+  receipts          CFEReceipt[]
+  activities        Activity[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([email])
+  @@index([rfc])
+  @@index([status])
+  @@index([createdById])
+}
+
+enum ClientType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+  GOVERNMENT
+}
+
+enum ClientStatus {
+  LEAD           // Prospecto inicial
+  CONTACTED      // Ya se contactó
+  QUALIFIED      // Calificado (tiene potencial)
+  PROPOSAL_SENT  // Cotización enviada
+  NEGOTIATION    // En negociación
+  WON            // Cliente ganado
+  LOST           // Oportunidad perdida
+  INACTIVE       // Cliente inactivo
+}
+
+// ============================================
+// MODELO: CFEReceipt (Nuevo - Para OCR)
+// ============================================
+model CFEReceipt {
+  id                String    @id @default(cuid())
+  
+  // Cliente
+  client            Client    @relation(fields: [clientId], references: [id])
+  clientId          String
+  
+  // Archivo
+  fileName          String
+  fileUrl           String    // URL en S3 o storage local
+  fileType          String    // "pdf" | "image/jpeg" | "image/png"
+  fileSize          Int       // En bytes
+  
+  // Datos extraídos por OCR
+  ocrData           Json?     // Datos raw del OCR
+  
+  // Campos estructurados
+  serviceNumber     String?
+  rpu               String?
+  clientName        String?
+  address           String?
+  tariff            String?   // "GDMTO", "02", etc.
+  billingPeriod     String?
+  totalAmount       Float?
+  avgConsumption    Float?    // kWh promedio
+  
+  // Metadata
+  isProcessed       Boolean   @default(false)
+  processingError   String?
+  extractedAt       DateTime?
+  
+  // Auditoría
+  uploadedBy        User?     @relation(fields: [uploadedById], references: [id])
+  uploadedById      String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([clientId])
+  @@index([serviceNumber])
+}
+
+// ============================================
+// MODELO: Quotation (Actualizar)
+// ============================================
+model Quotation {
+  id                String    @id @default(cuid())
+  quotationNumber   String    @unique
+  
+  // Cliente
+  client            Client    @relation(fields: [clientId], references: [id])
+  clientId          String
+  
+  // Sistema solar
+  panelsQty         Int
+  systemSize        Float     // kW
+  panelModel        String?
+  inverterModel     String?
+  
+  // Cálculos CFE
+  avgBill           Float
+  avgConsumption    Float
+  tariff            String
+  monthlyBillAfter  Float
+  monthlySavings    Float
+  
+  // Financiero
+  subtotal          Float
+  discount          Float     @default(0)
+  iva               Float
+  total             Float
+  
+  // ROI
+  paybackPeriod     Float     // Meses
+  roi25Years        Float     // Porcentaje
+  
+  // Desglose de costos
+  costBreakdown     Json?     // {panels: 8500, inverter: X, ...}
+  
+  // Estado y seguimiento
+  status            QuotationStatus @default(DRAFT)
+  validUntil        DateTime?
+  sentAt            DateTime?
+  viewedAt          DateTime?
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+  
+  // Notas internas
+  internalNotes     String?   @db.Text
+  termsAndConditions String?  @db.Text
+  
+  // Relaciones
+  createdBy         User      @relation(fields: [createdById], references: [id])
+  createdById       String
+  
+  invoice           Invoice?
+  activities        Activity[]
+  documents         Document[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([quotationNumber])
+  @@index([clientId])
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  VIEWED
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONVERTED  // Convertida a proyecto/factura
+}
+
+// ============================================
+// MODELO: Invoice (Nuevo - Para CFDI)
+// ============================================
+model Invoice {
+  id                String    @id @default(cuid())
+  invoiceNumber     String    @unique
+  
+  // Relaciones
+  client            Client    @relation(fields: [clientId], references: [id])
+  clientId          String
+  
+  quotation         Quotation @relation(fields: [quotationId], references: [id])
+  quotationId       String    @unique
+  
+  // Datos fiscales
+  rfc               String
+  businessName      String
+  taxRegime         String
+  cfdiUse           String
+  
+  // CFDI 4.0
+  cfdiUUID          String?   @unique  // UUID del timbrado
+  cfdiXmlUrl        String?            // URL del XML
+  cfdiPdfUrl        String?            // URL del PDF
+  
+  // Montos
+  subtotal          Float
+  discount          Float     @default(0)
+  iva               Float
+  total             Float
+  
+  // Pagos
+  paymentMethod     String    // "01" = Efectivo, "03" = Transferencia
+  paymentForm       String    // "PUE" = Pago en una exhibición
+  amountPaid        Float     @default(0)
+  balance           Float     // Saldo pendiente
+  
+  // Estado
+  status            InvoiceStatus @default(PENDING)
+  
+  // Timbrado
+  stampedAt         DateTime?
+  stampedBy         String?   // PAC usado (Facturama, etc)
+  
+  // Cancelación
+  canceledAt        DateTime?
+  cancelReason      String?
+  cancellationUUID  String?
+  
+  // Metadata
+  notes             String?   @db.Text
+  
+  // Auditoría
+  createdBy         User?     @relation(fields: [createdById], references: [id])
+  createdById       String?
+  
+  payments          Payment[]
+  activities        Activity[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([clientId])
+  @@index([quotationId])
+  @@index([cfdiUUID])
+  @@index([status])
+}
+
+enum InvoiceStatus {
+  PENDING      // Pendiente de timbrar
+  STAMPED      // Timbrada
+  PAID         // Pagada
+  PARTIAL_PAID // Parcialmente pagada
+  CANCELED     // Cancelada
+  VOIDED       // Anulada
+}
+
+// ============================================
+// MODELO: Payment (Nuevo)
+// ============================================
+model Payment {
+  id                String    @id @default(cuid())
+  
+  invoice           Invoice   @relation(fields: [invoiceId], references: [id])
+  invoiceId         String
+  
+  // Datos del pago
+  amount            Float
+  paymentMethod     String    // "01" = Efectivo, "03" = Transferencia
+  paymentDate       DateTime
+  reference         String?   // Número de transferencia, cheque, etc.
+  
+  // Complemento de pago
+  hasComplement     Boolean   @default(false)
+  complementUUID    String?
+  complementXmlUrl  String?
+  complementPdfUrl  String?
+  
+  // Notas
+  notes             String?
+  
+  // Auditoría
+  recordedBy        User?     @relation(fields: [recordedById], references: [id])
+  recordedById      String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@index([invoiceId])
+}
+
+// ============================================
+// MODELO: Activity (Nuevo - Para timeline)
+// ============================================
+model Activity {
+  id                String    @id @default(cuid())
+  
+  // Tipo de actividad
+  type              ActivityType
+  title             String
+  description       String?   @db.Text
+  
+  // Relaciones (una actividad puede estar relacionada a varias entidades)
+  client            Client?   @relation(fields: [clientId], references: [id])
+  clientId          String?
+  
+  quotation         Quotation? @relation(fields: [quotationId], references: [id])
+  quotationId       String?
+  
+  invoice           Invoice?  @relation(fields: [invoiceId], references: [id])
+  invoiceId         String?
+  
+  // Usuario que realizó la actividad
+  user              User?     @relation(fields: [userId], references: [id])
+  userId            String?
+  
+  // Metadata
+  metadata          Json?     // Datos adicionales específicos del tipo
+  
+  createdAt         DateTime  @default(now())
+  
+  @@index([clientId])
+  @@index([quotationId])
+  @@index([invoiceId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum ActivityType {
+  CLIENT_CREATED
+  CLIENT_UPDATED
+  CLIENT_CONTACTED
+  CLIENT_NOTE_ADDED
+  
+  QUOTATION_CREATED
+  QUOTATION_SENT
+  QUOTATION_VIEWED
+  QUOTATION_APPROVED
+  QUOTATION_REJECTED
+  QUOTATION_UPDATED
+  
+  INVOICE_CREATED
+  INVOICE_STAMPED
+  INVOICE_SENT
+  INVOICE_PAID
+  INVOICE_CANCELED
+  
+  PAYMENT_RECEIVED
+  
+  RECEIPT_UPLOADED
+  RECEIPT_ANALYZED
+  
+  EMAIL_SENT
+  WHATSAPP_SENT
+  CALL_MADE
+  MEETING_SCHEDULED
+}
+
+// ============================================
+// MODELO: Document (Nuevo - Archivos)
+// ============================================
+model Document {
+  id                String    @id @default(cuid())
+  
+  // Relaciones
+  quotation         Quotation? @relation(fields: [quotationId], references: [id])
+  quotationId       String?
+  
+  // Archivo
+  name              String
+  type              String    // "pdf", "image", "contract", etc.
+  category          String?   // "Cotización", "Contrato", "Instalación"
+  url               String
+  size              Int       // bytes
+  mimeType          String
+  
+  // Metadata
+  uploadedBy        User?     @relation(fields: [uploadedById], references: [id])
+  uploadedById      String?
+  
+  createdAt         DateTime  @default(now())
+  
+  @@index([quotationId])
+}
+
+// ============================================
+// MODELO: Settings (Nuevo - Configuración)
+// ============================================
+model Settings {
+  id                String    @id @default(cuid())
+  
+  // Información de la empresa
+  companyName       String
+  companyRFC        String
+  companyAddress    String
+  companyCity       String
+  companyState      String
+  companyZipCode    String
+  companyPhone      String
+  companyEmail      String
+  companyWebsite    String?
+  
+  // Logo y branding
+  logoUrl           String?
+  primaryColor      String    @default("#F3973E")
+  secondaryColor    String    @default("#1E40AF")
+  
+  // Configuración de cotizaciones
+  defaultDiscount   Float     @default(0)
+  defaultIVA        Float     @default(16)
+  quotationValidDays Int      @default(30)
+  
+  // Configuración de paneles (precios por defecto)
+  panelUnitPrice    Float     @default(8500)
+  inverterPrice     Float?
+  structurePrice    Float?
+  installationPrice Float?
+  
+  // Términos y condiciones
+  termsAndConditions String?  @db.Text
+  paymentTerms      String?   @db.Text
+  warranty          String?   @db.Text
+  
+  // CFDI
+  cfdiProvider      String?   // "facturama", "facturacom"
+  cfdiApiKey        String?   // Encriptado
+  cfdiApiSecret     String?   // Encriptado
+  cfdiTestMode      Boolean   @default(true)
+  
+  // Notificaciones
+  emailNotifications Boolean  @default(true)
+  whatsappNotifications Boolean @default(false)
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+```
+
+### ⚙️ 1.2 COMANDOS DE MIGRACIÓN
+
+```bash
+# 1. Crear el archivo de migración
+npx prisma migrate dev --name add_cfdi_and_ai_models --create-only
+
+# 2. Revisar el archivo de migración generado en:
+# prisma/migrations/[timestamp]_add_cfdi_and_ai_models/migration.sql
+
+# 3. Aplicar la migración
+npx prisma migrate dev
+
+# 4. Generar el cliente Prisma actualizado
+npx prisma generate
+
+# 5. (Opcional) Si ya tienes datos, crear script de migración de datos
+# Crear archivo: scripts/migrate-existing-data.ts
+```
+
+### 📝 1.3 SCRIPT DE MIGRACIÓN DE DATOS EXISTENTES
+
+```typescript
+// scripts/migrate-existing-data.ts
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function migrateData() {
+  console.log('🔄 Iniciando migración de datos...');
+  
+  try {
+    // 1. Migrar usuarios existentes (agregar campos nuevos)
+    await prisma.user.updateMany({
+      where: { role: undefined },
+      data: { role: 'SALESPERSON' }
+    });
+    
+    // 2. Migrar clientes existentes (agregar status)
+    const clients = await prisma.client.findMany();
+    
+    for (const client of clients) {
+      // Determinar status basado en cotizaciones
+      const quotations = await prisma.quotation.count({
+        where: { clientId: client.id }
+      });
+      
+      const status = quotations > 0 ? 'PROPOSAL_SENT' : 'LEAD';
+      
+      await prisma.client.update({
+        where: { id: client.id },
+        data: {
+          status,
+          clientType: 'RESIDENTIAL',
+          tags: []
+        }
+      });
+    }
+    
+    // 3. Crear configuración inicial si no existe
+    const settingsCount = await prisma.settings.count();
+    if (settingsCount === 0) {
+      await prisma.settings.create({
+        data: {
+          companyName: 'iAtlas Solar',
+          companyRFC: 'XXXXXXXXXXXXX',
+          companyAddress: 'Calle Ejemplo 123',
+          companyCity: 'Ciudad',
+          companyState: 'Estado',
+          companyZipCode: '00000',
+          companyPhone: '1234567890',
+          companyEmail: 'contacto@iatlassolar.com',
+          panelUnitPrice: 8500,
+          defaultIVA: 16,
+          quotationValidDays: 30
+        }
+      });
+    }
+    
+    console.log('✅ Migración completada exitosamente');
+  } catch (error) {
+    console.error('❌ Error en migración:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+migrateData();
+```
+
+### 🧪 1.4 TESTING DE MODELOS
+
+```typescript
+// tests/models.test.ts
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+describe('Database Models', () => {
+  test('Crear cliente con datos fiscales', async () => {
+    const client = await prisma.client.create({
+      data: {
+        firstName: 'Juan',
+        lastName: 'Pérez',
+        email: 'juan@example.com',
+        phone: '1234567890',
+        installAddress: 'Calle 1',
+        installCity: 'Ciudad',
+        installState: 'Estado',
+        installZipCode: '00000',
+        rfc: 'PEXJ800101XXX',
+        businessName: 'Juan Pérez',
+        taxRegime: '612',
+        cfdiUse: 'G03',
+        clientType: 'RESIDENTIAL',
+        status: 'LEAD',
+        createdById: 'user-id-here'
+      }
+    });
+    
+    expect(client.rfc).toBe('PEXJ800101XXX');
+  });
+  
+  test('Crear cotización con cliente', async () => {
+    // Test básico de relaciones
+  });
+});
+```
+
+### ✅ 1.5 CHECKLIST FASE 1
+
+- [ ] Schema Prisma actualizado
+- [ ] Migraciones creadas y aplicadas
+- [ ] Script de migración de datos ejecutado
+- [ ] Datos existentes migrados correctamente
+- [ ] Tests de modelos pasando
+- [ ] Documentación de cambios actualizada
+
+---
+
+## <a name="fase-2"></a>🤖 FASE 2: IMPLEMENTACIÓN COMPLETA IA/OCR (Semana 3-4)
+
+### 🎯 Objetivo
+Maximizar el uso de la IA y OCR para automatización inteligente.
+
+### 📂 2.1 ESTRUCTURA DE MÓDULOS IA
+
+```
+backend/
+└── modules/
+    └── ai/
+        ├── ocr/
+        │   ├── cfe-ocr.service.ts           (Ya existe - mejorar)
+        │   ├── multi-document-ocr.service.ts (Nuevo)
+        │   └── ocr-validation.service.ts     (Nuevo)
+        ├── analysis/
+        │   ├── consumption-analyzer.service.ts (Nuevo)
+        │   ├── tariff-optimizer.service.ts     (Nuevo)
+        │   └── anomaly-detector.service.ts     (Nuevo)
+        ├── generation/
+        │   ├── quotation-generator.service.ts  (Nuevo)
+        │   ├── email-generator.service.ts      (Nuevo)
+        │   └── report-generator.service.ts     (Nuevo)
+        └── ai.controller.ts
+        └── ai.routes.ts
+```
+
+### 🔧 2.2 MEJORAR OCR EXISTENTE
+
+```typescript
+// backend/modules/ai/ocr/cfe-ocr.service.ts (MEJORADO)
+
+import pdfParse from 'pdf-parse';
+import Tesseract from 'tesseract.js';
+import sharp from 'sharp';
+
+interface CFEReceiptData {
+  serviceNumber: string | null;
+  rpu: string | null;
+  clientName: string | null;
+  address: string | null;
+  tariff: string | null;
+  billingPeriod: string | null;
+  totalAmount: number | null;
+  avgConsumption: number | null;
+  consumptionHistory: Array<{
+    period: string;
+    consumption: number;
+  }>;
+  anomalies: string[];
+  confidence: number; // 0-100
+}
+
+export class CFEOCRService {
+  
+  /**
+   * Analiza un recibo CFE desde archivo
+   */
+  async analyzeReceipt(file: Express.Multer.File): Promise<CFEReceiptData> {
+    const fileBuffer = file.buffer;
+    const mimeType = file.mimetype;
+    
+    let extractedText = '';
+    
+    // Extraer texto según el tipo de archivo
+    if (mimeType === 'application/pdf') {
+      extractedText = await this.extractTextFromPDF(fileBuffer);
+    } else if (mimeType.startsWith('image/')) {
+      extractedText = await this.extractTextFromImage(fileBuffer);
+    } else {
+      throw new Error('Tipo de archivo no soportado');
+    }
+    
+    // Analizar el texto extraído
+    const data = this.parseReceiptText(extractedText);
+    
+    // Validar y limpiar datos
+    const validatedData = this.validateAndClean(data);
+    
+    // Detectar anomalías
+    validatedData.anomalies = this.detectAnomalies(validatedData);
+    
+    return validatedData;
+  }
+  
+  /**
+   * Analiza múltiples recibos (batch)
+   */
+  async analyzeMultipleReceipts(files: Express.Multer.File[]): Promise<CFEReceiptData[]> {
+    const results = await Promise.all(
+      files.map(file => this.analyzeReceipt(file))
+    );
+    
+    return results;
+  }
+  
+  /**
+   * Extrae texto de PDF
+   */
+  private async extractTextFromPDF(buffer: Buffer): Promise<string> {
+    try {
+      const data = await pdfParse(buffer);
+      return data.text;
+    } catch (error) {
+      console.error('Error extrayendo PDF:', error);
+      throw new Error('No se pudo leer el PDF');
+    }
+  }
+  
+  /**
+   * Extrae texto de imagen usando OCR
+   */
+  private async extractTextFromImage(buffer: Buffer): Promise<string> {
+    try {
+      // Preprocesar imagen para mejor OCR
+      const processedImage = await sharp(buffer)
+        .greyscale()
+        .normalize()
+        .sharpen()
+        .toBuffer();
+      
+      // Usar Tesseract para OCR
+      const { data: { text } } = await Tesseract.recognize(
+        processedImage,
+        'spa', // Español
+        {
+          logger: m => console.log(m)
+        }
+      );
+      
+      return text;
+    } catch (error) {
+      console.error('Error en OCR de imagen:', error);
+      throw new Error('No se pudo leer la imagen');
+    }
+  }
+  
+  /**
+   * Parsea el texto extraído del recibo
+   */
+  private parseReceiptText(text: string): Partial<CFEReceiptData> {
+    const data: Partial<CFEReceiptData> = {
+      consumptionHistory: []
+    };
+    
+    // Número de servicio
+    const serviceMatch = text.match(/N[úu]mero\s+de\s+servicio[:\s]+(\d{10,12})/i);
+    data.serviceNumber = serviceMatch ? serviceMatch[1] : null;
+    
+    // RPU
+    const rpuMatch = text.match(/RPU[:\s]+([A-Z0-9]{10,15})/i);
+    data.rpu = rpuMatch ? rpuMatch[1] : null;
+    
+    // Nombre del cliente
+    const nameMatch = text.match(/Nombre[:\s]+([A-ZÁÉÍÓÚÑ\s]+)/i);
+    data.clientName = nameMatch ? nameMatch[1].trim() : null;
+    
+    // Dirección
+    const addressMatch = text.match(/Direcci[óo]n[:\s]+([^\n]+)/i);
+    data.address = addressMatch ? addressMatch[1].trim() : null;
+    
+    // Tarifa
+    const tariffPatterns = [
+      /Tarifa[:\s]+(GDMTO|GDMTH|DAC|1[A-F]?|02)/i,
+      /(GDMTO|GDMTH|DAC)/i
+    ];
+    
+    for (const pattern of tariffPatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        data.tariff = match[1].toUpperCase();
+        break;
+      }
+    }
+    
+    // Período de facturación
+    const periodMatch = text.match(/Per[íi]odo[:\s]+(\d{2}\/\d{2}\/\d{4})\s*al\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (periodMatch) {
+      data.billingPeriod = `${periodMatch[1]} - ${periodMatch[2]}`;
+    }
+    
+    // Total a pagar
+    const totalMatch = text.match(/Total\s+a\s+pagar[:\s]*\$?\s*([\d,]+\.?\d*)/i);
+    if (totalMatch) {
+      data.totalAmount = parseFloat(totalMatch[1].replace(/,/g, ''));
+    }
+    
+    // Consumo promedio (kWh)
+    const consumptionMatch = text.match(/Consumo\s+promedio[:\s]*([\d,]+)\s*kWh/i);
+    if (consumptionMatch) {
+      data.avgConsumption = parseFloat(consumptionMatch[1].replace(/,/g, ''));
+    }
+    
+    // Historial de consumo (buscar tabla)
+    const consumptionPattern = /(\w{3}[-\/]\d{2})[:\s]*([\d,]+)\s*kWh/gi;
+    let match;
+    while ((match = consumptionPattern.exec(text)) !== null) {
+      data.consumptionHistory!.push({
+        period: match[1],
+        consumption: parseFloat(match[2].replace(/,/g, ''))
+      });
+    }
+    
+    return data;
+  }
+  
+  /**
+   * Valida y limpia los datos extraídos
+   */
+  private validateAndClean(data: Partial<CFEReceiptData>): CFEReceiptData {
+    let confidence = 100;
+    
+    // Validar campos críticos
+    if (!data.serviceNumber) confidence -= 20;
+    if (!data.totalAmount) confidence -= 15;
+    if (!data.avgConsumption) confidence -= 15;
+    if (!data.tariff) confidence -= 10;
+    
+    return {
+      serviceNumber: data.serviceNumber || null,
+      rpu: data.rpu || null,
+      clientName: data.clientName || null,
+      address: data.address || null,
+      tariff: data.tariff || null,
+      billingPeriod: data.billingPeriod || null,
+      totalAmount: data.totalAmount || null,
+      avgConsumption: data.avgConsumption || null,
+      consumptionHistory: data.consumptionHistory || [],
+      anomalies: [],
+      confidence
+    };
+  }
+  
+  /**
+   * Detecta anomalías en los datos
+   */
+  private detectAnomalies(data: CFEReceiptData): string[] {
+    const anomalies: string[] = [];
+    
+    // Consumo muy alto
+    if (data.avgConsumption && data.avgConsumption > 5000) {
+      anomalies.push('⚠️ Consumo inusualmente alto (>5000 kWh)');
+    }
+    
+    // Consumo muy bajo
+    if (data.avgConsumption && data.avgConsumption < 50) {
+      anomalies.push('⚠️ Consumo inusualmente bajo (<50 kWh)');
+    }
+    
+    // Monto muy alto
+    if (data.totalAmount && data.totalAmount > 50000) {
+      anomalies.push('⚠️ Monto inusualmente alto (>$50,000)');
+    }
+    
+    // Variación extrema en historial
+    if (data.consumptionHistory.length >= 3) {
+      const consumptions = data.consumptionHistory.map(h => h.consumption);
+      const avg = consumptions.reduce((a, b) => a + b) / consumptions.length;
+      const max = Math.max(...consumptions);
+      const min = Math.min(...consumptions);
+      
+      if (max / min > 3) {
+        anomalies.push('⚠️ Variación extrema en consumo mensual');
+      }
+    }
+    
+    // Tarifa no coincide con consumo
+    if (data.tariff === 'DAC' && data.avgConsumption && data.avgConsumption < 500) {
+      anomalies.push('⚠️ Tarifa DAC pero consumo bajo (<500 kWh)');
+    }
+    
+    return anomalies;
+  }
+}
+
+export default new CFEOCRService();
+```
+
+### 🧠 2.3 ANALIZADOR DE CONSUMO CON IA
+
+```typescript
+// backend/modules/ai/analysis/consumption-analyzer.service.ts
+
+import { CFEReceiptData } from '../ocr/cfe-ocr.service';
+
+interface ConsumptionAnalysis {
+  averageConsumption: number;
+  trend: 'increasing' | 'decreasing' | 'stable';
+  seasonality: {
+    hasSeasonality: boolean;
+    highMonths: string[];
+    lowMonths: string[];
+  };
+  prediction: {
+    next3Months: number[];
+    next12Months: number[];
+    confidence: number;
+  };
+  recommendations: string[];
+}
+
+export class ConsumptionAnalyzerService {
+  
+  /**
+   * Analiza el historial de consumo del cliente
+   */
+  async analyzeConsumption(receipts: CFEReceiptData[]): Promise<ConsumptionAnalysis> {
+    // Extraer datos de consumo
+    const consumptionData = this.extractConsumptionData(receipts);
+    
+    // Calcular promedio
+    const average = this.calculateAverage(consumptionData);
+    
+    // Detectar tendencia
+    const trend = this.detectTrend(consumptionData);
+    
+    // Detectar estacionalidad
+    const seasonality = this.detectSeasonality(consumptionData);
+    
+    // Predecir consumo futuro
+    const prediction = this.predictFutureConsumption(consumptionData);
+    
+    // Generar recomendaciones
+    const recommendations = this.generateRecommendations({
+      average,
+      trend,
+      seasonality,
+      receipts
+    });
+    
+    return {
+      averageConsumption: average,
+      trend,
+      seasonality,
+      prediction,
+      recommendations
+    };
+  }
+  
+  private extractConsumptionData(receipts: CFEReceiptData[]): number[] {
+    return receipts
+      .filter(r => r.avgConsumption !== null)
+      .map(r => r.avgConsumption!);
+  }
+  
+  private calculateAverage(data: number[]): number {
+    if (data.length === 0) return 0;
+    return data.reduce((a, b) => a + b) / data.length;
+  }
+  
+  private detectTrend(data: number[]): 'increasing' | 'decreasing' | 'stable' {
+    if (data.length < 3) return 'stable';
+    
+    // Regresión lineal simple
+    const n = data.length;
+    const sumX = (n * (n - 1)) / 2;
+    const sumY = data.reduce((a, b) => a + b);
+    const sumXY = data.reduce((acc, y, x) => acc + x * y, 0);
+    const sumX2 = data.reduce((acc, _, x) => acc + x * x, 0);
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    
+    if (slope > 10) return 'increasing';
+    if (slope < -10) return 'decreasing';
+    return 'stable';
+  }
+  
+  private detectSeasonality(data: number[]): ConsumptionAnalysis['seasonality'] {
+    if (data.length < 12) {
+      return {
+        hasSeasonality: false,
+        highMonths: [],
+        lowMonths: []
+      };
+    }
+    
+    // Calcular promedio por mes
+    const monthlyAvg = new Array(12).fill(0);
+    const monthlyCount = new Array(12).fill(0);
+    
+    data.forEach((consumption, index) => {
+      const month = index % 12;
+      monthlyAvg[month] += consumption;
+      monthlyCount[month]++;
+    });
+    
+    monthlyAvg.forEach((sum, i) => {
+      monthlyAvg[i] = monthlyCount[i] > 0 ? sum / monthlyCount[i] : 0;
+    });
+    
+    const overallAvg = monthlyAvg.reduce((a, b) => a + b) / 12;
+    const threshold = overallAvg * 0.15; // 15% de variación
+    
+    const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    
+    const highMonths = monthlyAvg
+      .map((avg, i) => ({ month: monthNames[i], avg }))
+      .filter(m => m.avg > overallAvg + threshold)
+      .map(m => m.month);
+    
+    const lowMonths = monthlyAvg
+      .map((avg, i) => ({ month: monthNames[i], avg }))
+      .filter(m => m.avg < overallAvg - threshold)
+      .map(m => m.month);
+    
+    return {
+      hasSeasonality: highMonths.length > 0 || lowMonths.length > 0,
+      highMonths,
+      lowMonths
+    };
+  }
+  
+  private predictFutureConsumption(data: number[]): ConsumptionAnalysis['prediction'] {
+    if (data.length < 6) {
+      return {
+        next3Months: [data[data.length - 1], data[data.length - 1], data[data.length - 1]],
+        next12Months: new Array(12).fill(data[data.length - 1]),
+        confidence: 30
+      };
+    }
+    
+    // Predicción simple usando promedio móvil ponderado
+    const weights = [0.5, 0.3, 0.2]; // Más peso a meses recientes
+    const lastThree = data.slice(-3);
+    
+    const prediction = lastThree.reduce((acc, val, i) => acc + val * weights[i], 0);
+    
+    const next3Months = [prediction, prediction * 1.02, prediction * 1.04];
+    const next12Months = new Array(12).fill(0).map((_, i) => prediction * (1 + i * 0.01));
+    
+    const confidence = Math.min(90, 50 + data.length * 3);
+    
+    return {
+      next3Months,
+      next12Months,
+      confidence
+    };
+  }
+  
+  private generateRecommendations(context: any): string[] {
+    const recommendations: string[] = [];
+    
+    // Recomendación basada en tendencia
+    if (context.trend === 'increasing') {
+      recommendations.push('📈 Tu consumo está aumentando. Un sistema solar te ayudará a controlar tus costos futuros.');
+    } else if (context.trend === 'decreasing') {
+      recommendations.push('📉 Tu consumo está disminuyendo, pero aún puedes ahorrar más con energía solar.');
+    }
+    
+    // Recomendación basada en estacionalidad
+    if (context.seasonality.hasSeasonality) {
+      recommendations.push(
+        `🌡️ Tu consumo es mayor en ${context.seasonality.highMonths.join(', ')}. ` +
+        'La energía solar te protegerá en estos meses de alto consumo.'
+      );
+    }
+    
+    // Recomendación basada en promedio
+    if (context.average > 1000) {
+      recommendations.push('⚡ Con tu consumo promedio de ' + Math.round(context.average) + ' kWh, un sistema solar se pagará rápidamente.');
+    }
+    
+    return recommendations;
+  }
+}
+
+export default new ConsumptionAnalyzerService();
+```
+
+### 💡 2.4 OPTIMIZADOR DE TARIFAS
+
+```typescript
+// backend/modules/ai/analysis/tariff-optimizer.service.ts
+
+interface TariffRecommendation {
+  currentTariff: string;
+  recommendedTariff: string;
+  potentialSavings: number;
+  reason: string;
+  shouldChangeTariff: boolean;
+}
+
+export class TariffOptimizerService {
+  
+  /**
+   * Analiza si el cliente debería cambiar de tarifa CFE
+   */
+  async analyzeTariff(
+    currentTariff: string,
+    avgConsumption: number,
+    avgBill: number
+  ): Promise<TariffRecommendation> {
+    
+    // Tarifas CFE y sus rangos típicos
+    const tariffInfo = {
+      '1': { min: 0, max: 140, name: 'Doméstica Básica' },
+      '1A': { min: 0, max: 150, name: 'Doméstica Zona Calurosa Baja' },
+      '1B': { min: 0, max: 175, name: 'Doméstica Zona Calurosa' },
+      '1C': { min: 0, max: 200, name: 'Doméstica Zona Calurosa Alta' },
+      'DAC': { min: 500, max: 999999, name: 'Doméstica Alto Consumo' },
+      'GDMTO': { min: 0, max: 999999, name: 'General de Media Tensión' },
+      'GDMTH': { min: 0, max: 999999, name: 'General de Media Tensión Horaria' }
+    };
+    
+    let recommendedTariff = currentTariff;
+    let potentialSavings = 0;
+    let reason = '';
+    let shouldChangeTariff = false;
+    
+    // Detectar si está en DAC pero podría volver a tarifa 1
+    if (currentTariff === 'DAC' && avgConsumption < 500) {
+      recommendedTariff = '1';
+      potentialSavings = avgBill * 0.30; // Aprox 30% de ahorro
+      reason = 'Tu consumo promedio es menor a 500 kWh. Podrías ahorrar ~30% regresando a tarifa doméstica.';
+      shouldChangeTariff = true;
+    }
+    
+    // Detectar si está en tarifa 1 pero consume mucho (debería estar en DAC)
+    if (currentTariff.startsWith('1') && avgConsumption > 500) {
+      reason = 'Tu consumo alto ya te colocó en tarifa DAC. La energía solar es tu mejor opción.';
+    }
+    
+    // Tarifa comercial con bajo consumo
+    if ((currentTariff === 'GDMTO' || currentTariff === 'GDMTH') && avgConsumption < 1000) {
+      reason = 'Verifica si podrías cambiar a tarifa PDBT (Pequeña Demanda Baja Tensión) para ahorrar.';
+      potentialSavings = avgBill * 0.15;
+      shouldChangeTariff = true;
+    }
+    
+    return {
+      currentTariff,
+      recommendedTariff,
+      potentialSavings,
+      reason,
+      shouldChangeTariff
+    };
+  }
+}
+
+export default new TariffOptimizerService();
+```
+
+### 🤖 2.5 GENERADOR AUTOMÁTICO DE COTIZACIONES
+
+```typescript
+// backend/modules/ai/generation/quotation-generator.service.ts
+
+import { CFEReceiptData } from '../ocr/cfe-ocr.service';
+import consumptionAnalyzer from '../analysis/consumption-analyzer.service';
+import tariffOptimizer from '../analysis/tariff-optimizer.service';
+
+interface QuotationDraft {
+  client: {
+    name: string;
+    address: string;
+    phone?: string;
+  };
+  system: {
+    panelsQty: number;
+    systemSize: number;
+    panelModel: string;
+    inverterModel: string;
+  };
+  financial: {
+    subtotal: number;
+    discount: number;
+    iva: number;
+    total: number;
+  };
+  roi: {
+    avgBill: number;
+    avgConsumption: number;
+    tariff: string;
+    monthlyBillAfter: number;
+    monthlySavings: number;
+    paybackPeriod: number;
+    roi25Years: number;
+  };
+  analysis: {
+    consumptionTrend: string;
+    tariffRecommendation: string;
+    aiInsights: string[];
+  };
+}
+
+export class QuotationGeneratorService {
+  
+  /**
+   * Genera una cotización completa automáticamente desde un recibo CFE
+   */
+  async generateFromReceipt(receipt: CFEReceiptData): Promise<QuotationDraft> {
+    // 1. Analizar consumo
+    const consumption = receipt.avgConsumption || 0;
+    const bill = receipt.totalAmount || 0;
+    const tariff = receipt.tariff || 'GDMTO';
+    
+    // 2. Calcular tamaño del sistema (regla: 1 kW por cada 140 kWh mensuales)
+    const systemSize = Math.ceil((consumption / 140) * 100) / 100;
+    const panelsQty = Math.ceil(systemSize / 0.45); // Paneles de 450W
+    
+    // 3. Calcular precios
+    const panelUnitPrice = 8500;
+    const subtotal = panelsQty * panelUnitPrice;
+    const discount = 0;
+    const iva = subtotal * 0.16;
+    const total = subtotal + iva - discount;
+    
+    // 4. Calcular ROI
+    const monthlyGeneration = systemSize * 140; // kWh generados
+    const coveragePercent = Math.min(1, monthlyGeneration / consumption);
+    const monthlyBillAfter = bill * (1 - coveragePercent);
+    const monthlySavings = bill - monthlyBillAfter;
+    const paybackPeriod = subtotal / monthlySavings; // meses
+    const totalSavings25Years = monthlySavings * 12 * 25;
+    const roi25Years = ((totalSavings25Years - subtotal) / subtotal) * 100;
+    
+    // 5. Análisis con IA
+    const tariffAnalysis = await tariffOptimizer.analyzeTariff(tariff, consumption, bill);
+    
+    const aiInsights: string[] = [];
+    
+    if (consumption > 1000) {
+      aiInsights.push('🔥 Alto consumo detectado. Sistema solar altamente recomendado.');
+    }
+    
+    if (tariff === 'DAC') {
+      aiInsights.push('⚡ Tarifa DAC: Estás pagando las tarifas más altas. La energía solar te dará el mayor ROI.');
+    }
+    
+    if (paybackPeriod < 36) {
+      aiInsights.push(`💰 Retorno de inversión en solo ${Math.round(paybackPeriod)} meses.`);
+    }
+    
+    if (tariffAnalysis.shouldChangeTariff) {
+      aiInsights.push(`💡 ${tariffAnalysis.reason}`);
+    }
+    
+    // 6. Ensamblar cotización
+    return {
+      client: {
+        name: receipt.clientName || 'Cliente',
+        address: receipt.address || '',
+        phone: undefined
+      },
+      system: {
+        panelsQty,
+        systemSize,
+        panelModel: 'Panel Solar 450W Monocristalino',
+        inverterModel: this.selectInverter(systemSize)
+      },
+      financial: {
+        subtotal,
+        discount,
+        iva,
+        total
+      },
+      roi: {
+        avgBill: bill,
+        avgConsumption: consumption,
+        tariff,
+        monthlyBillAfter,
+        monthlySavings,
+        paybackPeriod,
+        roi25Years
+      },
+      analysis: {
+        consumptionTrend: 'Estable', // Mejorar con análisis real
+        tariffRecommendation: tariffAnalysis.reason,
+        aiInsights
+      }
+    };
+  }
+  
+  private selectInverter(systemSize: number): string {
+    if (systemSize <= 5) return 'Inversor 5kW On-Grid';
+    if (systemSize <= 10) return 'Inversor 10kW On-Grid';
+    if (systemSize <= 20) return 'Inversor 20kW On-Grid';
+    return 'Inversor 30kW On-Grid';
+  }
+}
+
+export default new QuotationGeneratorService();
+```
+
+### 📧 2.6 GENERADOR DE EMAILS CON IA
+
+```typescript
+// backend/modules/ai/generation/email-generator.service.ts
+
+interface EmailTemplate {
+  subject: string;
+  body: string;
+  tone: 'professional' | 'friendly' | 'urgent';
+}
+
+export class EmailGeneratorService {
+  
+  /**
+   * Genera email de seguimiento personalizado
+   */
+  generateFollowUpEmail(
+    clientName: string,
+    quotationNumber: string,
+    monthlySavings: number,
+    paybackPeriod: number
+  ): EmailTemplate {
+    const savingsFormatted = new Intl.NumberFormat('es-MX', {
+      style: 'currency',
+      currency: 'MXN'
+    }).format(monthlySavings);
+    
+    return {
+      subject: `${clientName}, ¿revisaste tu cotización solar? 💰`,
+      body: `
+Hola ${clientName},
+
+Te escribo para darle seguimiento a tu cotización #${quotationNumber}.
+
+Quiero recordarte que con el sistema solar que diseñamos para ti:
+
+✅ Ahorrarás ${savingsFormatted} cada mes
+✅ Recuperarás tu inversión en solo ${Math.round(paybackPeriod)} meses
+✅ Reducirás tu huella de carbono significativamente
+
+¿Tienes alguna duda? Estoy aquí para ayudarte.
+
+¿Te gustaría agendar una llamada para resolver cualquier inquietud?
+
+Saludos,
+[Tu nombre]
+iAtlas Solar
+      `.trim(),
+      tone: 'friendly'
+    };
+  }
+  
+  /**
+   * Genera email de propuesta inicial
+   */
+  generateProposalEmail(
+    clientName: string,
+    quotationNumber: string,
+    roi25Years: number
+  ): EmailTemplate {
+    return {
+      subject: `Tu propuesta solar personalizada - ${clientName}`,
+      body: `
+Estimado/a ${clientName},
+
+Es un placer compartir contigo tu propuesta solar personalizada (Cotización #${quotationNumber}).
+
+Basándonos en el análisis de tu consumo eléctrico, hemos diseñado un sistema que:
+
+🌞 Se adapta perfectamente a tus necesidades energéticas
+💰 Te generará un retorno del ${Math.round(roi25Years)}% en 25 años
+🌱 Contribuirá a un futuro más sostenible
+
+Adjunto encontrarás los detalles completos de tu propuesta.
+
+¿Cuándo podemos agendar una reunión para resolver tus dudas?
+
+Atentamente,
+[Tu nombre]
+iAtlas Solar
+      `.trim(),
+      tone: 'professional'
+    };
+  }
+}
+
+export default new EmailGeneratorService();
+```
+
+### 🔌 2.7 CONTROLADOR Y RUTAS DE IA
+
+```typescript
+// backend/modules/ai/ai.controller.ts
+
+import { Request, Response } from 'express';
+import cfeOCRService from './ocr/cfe-ocr.service';
+import consumptionAnalyzer from './analysis/consumption-analyzer.service';
+import tariffOptimizer from './analysis/tariff-optimizer.service';
+import quotationGenerator from './generation/quotation-generator.service';
+import emailGenerator from './generation/email-generator.service';
+
+export class AIController {
+  
+  // OCR: Analizar recibo
+  async analyzeReceipt(req: Request, res: Response) {
+    try {
+      const file = req.file;
+      
+      if (!file) {
+        return res.status(400).json({ error: 'No se envió ningún archivo' });
+      }
+      
+      const result = await cfeOCRService.analyzeReceipt(file);
+      
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  // OCR: Analizar múltiples recibos
+  async analyzeMultipleReceipts(req: Request, res: Response) {
+    try {
+      const files = req.files as Express.Multer.File[];
+      
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'No se enviaron archivos' });
+      }
+      
+      const results = await cfeOCRService.analyzeMultipleReceipts(files);
+      
+      res.json({
+        success: true,
+        data: results
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  // Análisis: Consumo
+  async analyzeConsumption(req: Request, res: Response) {
+    try {
+      const { receipts } = req.body;
+      
+      const analysis = await consumptionAnalyzer.analyzeConsumption(receipts);
+      
+      res.json({
+        success: true,
+        data: analysis
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  // Análisis: Tarifa
+  async analyzeTariff(req: Request, res: Response) {
+    try {
+      const { currentTariff, avgConsumption, avgBill } = req.body;
+      
+      const recommendation = await tariffOptimizer.analyzeTariff(
+        currentTariff,
+        avgConsumption,
+        avgBill
+      );
+      
+      res.json({
+        success: true,
+        data: recommendation
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  // Generar cotización automática
+  async generateQuotation(req: Request, res: Response) {
+    try {
+      const { receipt } = req.body;
+      
+      const quotation = await quotationGenerator.generateFromReceipt(receipt);
+      
+      res.json({
+        success: true,
+        data: quotation
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  // Generar email
+  async generateEmail(req: Request, res: Response) {
+    try {
+      const { type, clientName, quotationNumber, monthlySavings, paybackPeriod, roi25Years } = req.body;
+      
+      let email;
+      
+      if (type === 'follow-up') {
+        email = emailGenerator.generateFollowUpEmail(
+          clientName,
+          quotationNumber,
+          monthlySavings,
+          paybackPeriod
+        );
+      } else if (type === 'proposal') {
+        email = emailGenerator.generateProposalEmail(
+          clientName,
+          quotationNumber,
+          roi25Years
+        );
+      } else {
+        return res.status(400).json({ error: 'Tipo de email inválido' });
+      }
+      
+      res.json({
+        success: true,
+        data: email
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+}
+
+export default new AIController();
+```
+
+```typescript
+// backend/modules/ai/ai.routes.ts
+
+import { Router } from 'express';
+import multer from 'multer';
+import aiController from './ai.controller';
+
+const router = Router();
+const upload = multer({ storage: multer.memoryStorage() });
+
+// OCR
+router.post('/ocr/receipt', upload.single('file'), aiController.analyzeReceipt);
+router.post('/ocr/receipts/batch', upload.array('files'), aiController.analyzeMultipleReceipts);
+
+// Análisis
+router.post('/analyze/consumption', aiController.analyzeConsumption);
+router.post('/analyze/tariff', aiController.analyzeTariff);
+
+// Generación
+router.post('/generate/quotation', aiController.generateQuotation);
+router.post('/generate/email', aiController.generateEmail);
+
+export default router;
+```
+
+### ✅ 2.8 CHECKLIST FASE 2
+
+- [ ] OCR mejorado con Tesseract
+- [ ] Análisis de múltiples recibos (batch)
+- [ ] Analizador de consumo implementado
+- [ ] Optimizador de tarifas funcionando
+- [ ] Generador automático de cotizaciones
+- [ ] Generador de emails personalizados
+- [ ] Tests de cada servicio
+- [ ] Documentación de APIs
+
+---
+
+## <a name="fase-3"></a>🧾 FASE 3: MÓDULO CFDI (Semana 5-6)
+
+### 🎯 Objetivo
+Integrar facturación electrónica CFDI 4.0 con PAC.
+
+### 📦 3.1 INSTALACIÓN DE DEPENDENCIAS
+
+```bash
+npm install axios
+npm install @types/node
+```
+
+### 🔑 3.2 SERVICIO FACTURAMA (PAC)
+
+```typescript
+// backend/modules/cfdi/facturama.service.ts
+
+import axios, { AxiosInstance } from 'axios';
+
+interface FacturamaConfig {
+  username: string;
+  password: string;
+  testMode: boolean;
+}
+
+interface CFDICreateRequest {
+  // Emisor (tu empresa)
+  Emisor: {
+    Rfc: string;
+    Nombre: string;
+    RegimenFiscal: string;
+  };
+  // Receptor (cliente)
+  Receptor: {
+    Rfc: string;
+    Nombre: string;
+    UsoCFDI: string;
+    RegimenFiscalReceptor: string;
+    DomicilioFiscalReceptor: string;
+  };
+  // Conceptos (productos/servicios)
+  Conceptos: Array<{
+    ClaveProdServ: string;
+    Cantidad: number;
+    ClaveUnidad: string;
+    Unidad: string;
+    Descripcion: string;
+    ValorUnitario: number;
+    Importe: number;
+    Descuento?: number;
+    ObjetoImp: string;
+    Impuestos?: {
+      Traslados?: Array<{
+        Base: number;
+        Impuesto: string;
+        TipoFactor: string;
+        TasaOCuota: number;
+        Importe: number;
+      }>;
+    };
+  }>;
+  // Forma de pago
+  FormaPago: string;
+  MetodoPago: string;
+  // Moneda
+  Moneda: string;
+  TipoDeComprobante: string;
+}
+
+interface CFDIResponse {
+  Id: string;
+  UUID: string;
+  Date: string;
+  CfdiType: string;
+  Status: string;
+  Pdf: string; // Base64
+  Xml: string; // Base64
+}
+
+export class FacturamaService {
+  private client: AxiosInstance;
+  private config: FacturamaConfig;
+  
+  constructor(config: FacturamaConfig) {
+    this.config = config;
+    
+    const baseURL = config.testMode
+      ? 'https://apisandbox.facturama.mx'
+      : 'https://api.facturama.mx';
+    
+    this.client = axios.create({
+      baseURL,
+      auth: {
+        username: config.username,
+        password: config.password
+      },
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+  
+  /**
+   * Crear y timbrar CFDI
+   */
+  async createCFDI(data: CFDICreateRequest): Promise<CFDIResponse> {
+    try {
+      const response = await this.client.post('/api/3/cfdis', data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error creando CFDI:', error.response?.data || error.message);
+      throw new Error(`Error al timbrar factura: ${error.response?.data?.Message || error.message}`);
+    }
+  }
+  
+  /**
+   * Cancelar CFDI
+   */
+  async cancelCFDI(cfdiId: string, reason: string): Promise<void> {
+    try {
+      await this.client.delete(`/api/3/cfdis/${cfdiId}`, {
+        data: {
+          motive: reason,
+          uuidReplacement: null
+        }
+      });
+    } catch (error: any) {
+      console.error('Error cancelando CFDI:', error.response?.data || error.message);
+      throw new Error(`Error al cancelar factura: ${error.response?.data?.Message || error.message}`);
+    }
+  }
+  
+  /**
+   * Descargar PDF
+   */
+  async downloadPDF(cfdiId: string): Promise<Buffer> {
+    try {
+      const response = await this.client.get(`/api/3/cfdis/${cfdiId}/pdf`, {
+        responseType: 'arraybuffer'
+      });
+      return Buffer.from(response.data);
+    } catch (error: any) {
+      throw new Error('Error al descargar PDF');
+    }
+  }
+  
+  /**
+   * Descargar XML
+   */
+  async downloadXML(cfdiI

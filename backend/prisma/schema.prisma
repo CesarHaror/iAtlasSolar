@@ -478,3 +478,82 @@ model CityHSP {
 
   @@map("city_hsp")
 }
+// =====================================================
+// OCR TESTING - FASE 4
+// =====================================================
+
+enum OCRTestStatus {
+  PENDING      // Esperando procesamiento
+  PROCESSING   // En procesamiento
+  COMPLETED    // Completado
+  FAILED       // Falló
+}
+
+model OCRTestResult {
+  id                  String       @id @default(uuid())
+  testId              String       @unique
+  fileName            String
+  fileType            String       // pdf, jpg, png, etc
+  
+  // Datos extraídos vs esperados
+  extractedData       Json         // Datos que sacó OCR
+  groundTruth         Json         // Datos esperados (correctos)
+  
+  // Resultados de validación
+  overallAccuracy     Float        // 0-100%
+  fieldResults        Json         // Accuracy por campo
+  errors              Json         // Array de errores
+  
+  // Campos críticos vs normales
+  criticalAccuracy    Float?       // Accuracy de campos críticos
+  
+  // Timing
+  processingTime      Int          // ms
+  ocrConfidence       Float        // 0-1
+  
+  // Metadatos
+  status              OCRTestStatus @default(COMPLETED)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  
+  // Relación con usuario que ejecutó el test
+  createdBy           String?       // ID del usuario
+  
+  // Para análisis - Relación con batch
+  batchId             String?
+  batch               OCRTestBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  
+  @@index([createdAt])
+  @@index([status])
+  @@index([batchId])
+  @@map("ocr_test_results")
+}
+
+model OCRTestBatch {
+  id                  String       @id @default(uuid())
+  batchId             String       @unique
+  
+  // Información del batch
+  name                String
+  description         String?
+  totalTests          Int
+  processedCount      Int          @default(0)
+  errorCount          Int          @default(0)
+  
+  // Métricas agregadas
+  avgAccuracy         Float?
+  avgProcessingTime   Int?
+  
+  // Relaciones
+  results             OCRTestResult[]
+  
+  // Metadatos
+  status              OCRTestStatus @default(PROCESSING)
+  createdAt           DateTime      @default(now())
+  completedAt         DateTime?
+  
+  createdBy           String?
+  
+  @@index([createdAt])
+  @@map("ocr_test_batches")
+}

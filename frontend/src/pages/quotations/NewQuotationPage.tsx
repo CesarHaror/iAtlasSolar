@@ -28,8 +28,9 @@ import { useCalculateSolar, useCreateQuotation, CreateQuotationInput } from '../
 import { useClients, useSearchClients } from '../../hooks/useClients';
 import { usePanels, useInverters } from '../../hooks/useCatalog';
 import { CFEReceiptData } from '../../hooks/useOCR';
-import CFEReceiptUpload from '../../components/quotations/CFEReceiptUpload';
+import CFEReceiptUploadMultiple from '../../components/quotations/CFEReceiptUploadMultiple';
 import CreateClientFromReceiptModal from '../../components/clients/CreateClientFromReceiptModal';
+import { ConsumptionProjectionCharts } from '../../components/quotations/ConsumptionProjectionCharts';
 
 // Tipos
 type Step = 'receipt' | 'client' | 'config' | 'results';
@@ -136,19 +137,34 @@ export default function NewQuotationPage() {
     }
   }, [clientIdFromParams, clients]);
 
-  // Manejar datos extraídos del recibo
-  const handleReceiptDataExtracted = (data: CFEReceiptData) => {
-    setReceiptData(data);
-    if (data.tariff) setTariff(data.tariff as Tariff);
-    if (data.consumption?.monthly) setMonthlyConsumption(data.consumption.monthly);
-    // Usar el promedio histórico de gasto si está disponible, sino usar el monto del periodo actual
-    if (data.billing?.averageAmount) {
-      setAvgBill(data.billing.averageAmount);
-    } else if (data.billing?.totalAmount) {
-      setAvgBill(data.billing.totalAmount);
+  // Manejar datos extraídos del recibo (ahora múltiples)
+  const handleReceiptDataExtracted = (dataArray: CFEReceiptData[]) => {
+    // Usar el primer recibo como principal, pero usar datos promediados si hay múltiples
+    const primaryReceipt = dataArray[0];
+    setReceiptData(primaryReceipt);
+    
+    if (primaryReceipt.tariff) setTariff(primaryReceipt.tariff as Tariff);
+    if (primaryReceipt.consumption?.monthly) setMonthlyConsumption(primaryReceipt.consumption.monthly);
+    if (primaryReceipt.billing?.averageAmount) {
+      setAvgBill(primaryReceipt.billing.averageAmount);
+    } else if (primaryReceipt.billing?.totalAmount) {
+      setAvgBill(primaryReceipt.billing.totalAmount);
     }
-    if (data.city) setCity(data.city);
-    if (data.state) setState(data.state);
+    if (primaryReceipt.city) setCity(primaryReceipt.city);
+    if (primaryReceipt.state) setState(primaryReceipt.state);
+    
+    // Auto-crear o buscar cliente si tenemos los datos
+    if (primaryReceipt.serviceNumber) {
+      // Buscar cliente existente con este número de servicio
+      const existingClient = clients.find((c: any) => c.cfeServiceNumber === primaryReceipt.serviceNumber);
+      if (existingClient) {
+        setSelectedClient(existingClient as ClientData);
+        setCurrentStep('config');
+      } else {
+        // Mostrar modal para crear cliente
+        setShowCreateClientModal(true);
+      }
+    }
   };
 
   // Cuando se crea un cliente desde el recibo
@@ -172,6 +188,86 @@ export default function NewQuotationPage() {
     }
     if (client.city && !receiptData?.city) setCity(client.city);
     if (client.state && !receiptData?.state) setState(client.state || '');
+  };
+
+  // Generar proyección de consumo comparativa (CON vs SIN paneles)
+  const generateConsumptionProjection = (
+    currentMonthlyKwh: number,
+    systemSizeKW: number,
+    tariffRate: number
+  ) => {
+    const months = 12;
+    const projections = [];
+
+    // Tasa de crecimiento anual estimada (2.5% por año en México)
+    const growthRate = 0.025;
+
+    // Horas de sol promedio diarias (según región, usar ~5.5)
+    const sunHoursPerDay = 5.5;
+
+    // Eficiencia de paneles (típicamente 18-20%)
+    const panelEfficiency = 0.18;
+
+    // Producción diaria de paneles (kWh/día)
+    const panelProductionDaily = (systemSizeKW * panelEfficiency * sunHoursPerDay);
+    const panelProductionMonthly = panelProductionDaily * 30;
+
+    let totalSavings = 0;
+
+    for (let month = 1; month <= months; month++) {
+      const monthNumber = (new Date().getMonth() + month) % 12 || 12;
+      const monthNames = [
+        'Enero',
+        'Febrero',
+        'Marzo',
+        'Abril',
+        'Mayo',
+        'Junio',
+        'Julio',
+        'Agosto',
+        'Septiembre',
+        'Octubre',
+        'Noviembre',
+        'Diciembre',
+      ];
+
+      // Consumo proyectado CON crecimiento mensual (growthRate por año)
+      const baseConsumption = currentMonthlyKwh * (1 + (growthRate * month) / 12);
+
+      // SIN PANELES
+      const withoutPanelsConsumption = baseConsumption;
+      const withoutPanelsCost = withoutPanelsConsumption * tariffRate;
+
+      // CON PANELES
+      const solarProduction = Math.min(baseConsumption, panelProductionMonthly);
+      const withPanelsConsumption = Math.max(0, baseConsumption - solarProduction);
+      const withPanelsCost = withPanelsConsumption * tariffRate;
+
+      const savingsMXN = withoutPanelsCost - withPanelsCost;
+      totalSavings += savingsMXN;
+
+      projections.push({
+        month,
+        monthName: monthNames[monthNumber - 1],
+        withPanels: {
+          gridConsumption: withPanelsConsumption,
+          solarProduction: solarProduction,
+          netConsumption: baseConsumption,
+          costMXN: withPanelsCost,
+        },
+        withoutPanels: {
+          gridConsumption: withoutPanelsConsumption,
+          costMXN: withoutPanelsCost,
+        },
+        savingsMXN,
+        savingsPercent: ((withoutPanelsCost - withPanelsCost) / withoutPanelsCost) * 100,
+      });
+    }
+
+    return {
+      projections,
+      totalSavings12Months: totalSavings,
+    };
   };
 
   // Calcular el sistema
@@ -211,7 +307,7 @@ export default function NewQuotationPage() {
       const result = await calculateSolar.mutateAsync(calculationData);
       
       // Mapear los campos del backend a los esperados por el frontend
-      const mappedResults = {
+      const mappedResults: any = {
         // Dimensionamiento
         systemSize: result.systemSizeKwp,
         panelsQty: result.numberOfPanels,
@@ -264,6 +360,16 @@ export default function NewQuotationPage() {
         co2OffsetTons: result.co2OffsetTons,
         treesEquivalent: result.treesEquivalent,
       };
+
+      // Generar proyección de consumo (CON vs SIN paneles)
+      const projection = generateConsumptionProjection(
+        monthlyConsumption,
+        result.systemSizeKwp,
+        result.tariffRate
+      );
+
+      (mappedResults as any).consumptionProjection = projection.projections;
+      (mappedResults as any).totalSavings12Months = projection.totalSavings12Months;
       
       setResults(mappedResults);
       setCurrentStep('results');
@@ -363,11 +469,11 @@ export default function NewQuotationPage() {
         </div>
         <h2 className="text-2xl font-bold text-gray-900">Sube el Recibo CFE</h2>
         <p className="text-gray-600 mt-2">
-          Analiza automáticamente el recibo para extraer consumo, tarifa y datos del cliente
+          Puedes subir 1 o múltiples recibos del MISMO número de servicio
         </p>
       </div>
 
-      <CFEReceiptUpload
+      <CFEReceiptUploadMultiple
         onDataExtracted={handleReceiptDataExtracted}
         onClose={() => {}}
         onClientCreated={handleClientCreated}
@@ -835,6 +941,17 @@ export default function NewQuotationPage() {
             </div>
           </div>
         </div>
+
+        {/* Proyección de consumo comparativa */}
+        {results.consumptionProjection && (
+          <div className="mt-8">
+            <ConsumptionProjectionCharts
+              projections={results.consumptionProjection}
+              totalSavings12Months={results.totalSavings12Months || 0}
+              systemSizeKW={results.systemSize || 0}
+            />
+          </div>
+        )}
 
         {/* Botón de guardar */}
         <div className="flex justify-center pt-4">

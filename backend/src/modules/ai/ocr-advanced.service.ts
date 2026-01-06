@@ -21,18 +21,39 @@ export interface OCRResult {
   rawText: string;
   confidence: number;
   extractedFields: {
+    // Identificación del servicio
     serviceNumber?: string;
     accountNumber?: string;
+    meterNumber?: string;
+    
+    // Datos del cliente
     clientName?: string;
     address?: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    phone?: string;
+    email?: string;
+    
+    // Consumo y tarifa
     currentConsumption?: number;
     previousConsumption?: number;
     consumptionKWh?: number;
+    consumptionTrend?: 'stable' | 'increasing' | 'decreasing';
+    
+    // Facturación
     currentAmount?: number;
     tariffType?: string;
     issueDate?: string;
     dueDate?: string;
-    meterNumber?: string;
+    
+    // Histórico si existe
+    previousBills?: {
+      month: string;
+      consumption: number;
+      amount: number;
+    }[];
+    averageConsumption?: number;
   };
   source: 'tesseract' | 'pdf-parse' | 'hybrid';
   processingTime: number;
